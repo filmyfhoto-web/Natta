@@ -1,0 +1,185 @@
+// Grill Me — back-office schema
+// Two storefronts (branches) share one product catalog, one stock pool,
+// and one customer list. Every stock change is logged as a StockMovement
+// so sales at either branch (POS) or online (web) can be audited.
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum Role {
+  ADMIN
+  STAFF
+}
+
+enum StockMovementType {
+  RESTOCK
+  SALE
+  ADJUSTMENT
+  RETURN
+}
+
+enum OrderChannel {
+  WEB
+  POS
+}
+
+enum OrderStatus {
+  PENDING
+  PAID
+  COMPLETED
+  CANCELLED
+}
+
+enum PaymentMethod {
+  CASH
+  TRANSFER
+  QR
+}
+
+model Store {
+  id        String   @id @default(cuid())
+  name      String
+  code      String   @unique
+  address   String?
+  phone     String?
+  createdAt DateTime @default(now())
+
+  users          User[]
+  stockMovements StockMovement[]
+  orders         Order[]
+
+  @@map("stores")
+}
+
+model User {
+  id           String   @id @default(cuid())
+  username     String   @unique
+  passwordHash String
+  name         String
+  role         Role     @default(STAFF)
+  active       Boolean  @default(true)
+  storeId      String?
+  store        Store?   @relation(fields: [storeId], references: [id])
+  createdAt    DateTime @default(now())
+
+  stockMovements StockMovement[]
+  orders         Order[]
+
+  @@map("users")
+}
+
+model Category {
+  id       String    @id @default(cuid())
+  name     String
+  slug     String    @unique
+  products Product[]
+
+  @@map("categories")
+}
+
+model Product {
+  id                String   @id @default(cuid())
+  sku               String   @unique
+  name              String
+  slug              String   @unique
+  description       String?
+  imageUrl          String?
+  price             Int // stored in satang (1 THB = 100 satang) to avoid float rounding
+  stockQty          Int      @default(0) // shared pool across both branches
+  lowStockThreshold Int      @default(5)
+  active            Boolean  @default(true)
+  categoryId        String?
+  category          Category? @relation(fields: [categoryId], references: [id])
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  stockMovements StockMovement[]
+  orderItems     OrderItem[]
+
+  @@index([categoryId])
+  @@map("products")
+}
+
+model StockMovement {
+  id             String            @id @default(cuid())
+  productId      String
+  product        Product           @relation(fields: [productId], references: [id])
+  type           StockMovementType
+  quantityChange Int // positive = added to pool, negative = removed
+  balanceAfter   Int
+  reason         String?
+  storeId        String?
+  store          Store?            @relation(fields: [storeId], references: [id])
+  userId         String?
+  user           User?             @relation(fields: [userId], references: [id])
+  orderId        String?
+  order          Order?            @relation(fields: [orderId], references: [id])
+  createdAt      DateTime          @default(now())
+
+  @@index([productId])
+  @@index([storeId])
+  @@map("stock_movements")
+}
+
+model Customer {
+  id        String   @id @default(cuid())
+  name      String
+  phone     String   @unique
+  email     String?
+  address   String?
+  createdAt DateTime @default(now())
+
+  orders Order[]
+
+  @@map("customers")
+}
+
+model Order {
+  id            String        @id @default(cuid())
+  code          String        @unique
+  channel       OrderChannel
+  status        OrderStatus   @default(PENDING)
+  storeId       String?
+  store         Store?        @relation(fields: [storeId], references: [id])
+  customerId    String?
+  customer      Customer?     @relation(fields: [customerId], references: [id])
+  userId        String?
+  user          User?         @relation(fields: [userId], references: [id])
+  subtotal      Int
+  total         Int
+  paymentMethod PaymentMethod?
+  note          String?
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+
+  items          OrderItem[]
+  stockMovements StockMovement[]
+
+  @@index([channel])
+  @@index([status])
+  @@index([storeId])
+  @@index([customerId])
+  @@map("orders")
+}
+
+model OrderItem {
+  id          String  @id @default(cuid())
+  orderId     String
+  order       Order   @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  productId   String
+  product     Product @relation(fields: [productId], references: [id])
+  productName String // snapshot at time of sale
+  unitPrice   Int // snapshot at time of sale (satang)
+  quantity    Int
+  lineTotal   Int
+
+  @@index([orderId])
+  @@index([productId])
+  @@map("order_items")
+}
